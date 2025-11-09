@@ -3,11 +3,11 @@ import random
 import torch
 import numpy as np
 import h5py
-import urllib.request, urllib.error, urllib.parse, os, tempfile
+import urllib.request, urllib.error, os
 from torch.utils.data import Dataset
 from imageio import imread
 from PIL import Image
-
+from io import BytesIO
 
 dir_path = os.path.dirname(os.path.realpath(__file__))
 BASE_DIR = os.path.join(dir_path, "datasets/coco_captioning")
@@ -114,14 +114,16 @@ def image_from_url(url):
     We write the image to a temporary file then read it back. Kinda gross.
     """
     try:
-        f = urllib.request.urlopen(url)
-        _, fname = tempfile.mkstemp()
-        with open(fname, "wb") as ff:
-            ff.write(f.read())
-        img = imread(fname)
-        os.remove(fname)
-        return img
+        with urllib.request.urlopen(url, timeout=10) as resp:
+            data = resp.read()
+
+        with Image.open(BytesIO(data)) as img:
+            return np.array(img.convert("RGB"))
+
     except urllib.error.URLError as e:
-        print("URL Error: ", e.reason, url)
+        print("URL Error:", e.reason, url)
     except urllib.error.HTTPError as e:
-        print("HTTP Error: ", e.code, url)
+        print("HTTP Error:", e.code, url)
+    except Exception as e:
+        print("Image load error:", e, url)
+    return None
