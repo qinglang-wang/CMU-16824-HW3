@@ -1,13 +1,11 @@
 import numpy as np
-from utils import  decode_captions
+from utils import decode_captions
 
 import torch
 
 
 class Trainer(object):
-
     def __init__(self, model, train_dataloader, val_dataloader, learning_rate = 0.001, num_epochs = 10, print_every = 10, verbose = True, device = 'cuda'):
-      
         self.model = model
         self.train_dataloader = train_dataloader
         self.val_dataloader = val_dataloader
@@ -21,9 +19,17 @@ class Trainer(object):
         self.optim = torch.optim.Adam(self.model.parameters(), self.learning_rate)
 
     def loss(self, predictions, labels):
-        #TODO - Compute cross entropy loss between predictions and labels. 
-        #Make sure to compute this loss only for indices where label is not the null token.
-        #The loss should be averaged over batch and sequence dimensions. 
+        ##|Q.1.e|##########################################################################
+        # TODO: Compute cross entropy loss between predictions and labels. 
+        # Make sure to compute this loss only for indices where label is not the null token.
+        # The loss should be averaged over batch and sequence dimensions.
+        N, T, V = predictions.shape
+        labels = labels.to(device=predictions.device, dtype=torch.long)
+
+        valid_mask = (labels != self.model._null)
+        loss = torch.nn.functional.cross_entropy(predictions.reshape(-1, V), labels.reshape(-1), reduction='none').reshape(N, T)
+        loss = (loss * valid_mask).sum() / valid_mask.sum()
+        ###################################################################################
         return loss
     
     def val(self):
