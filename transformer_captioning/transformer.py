@@ -152,17 +152,17 @@ class CrossAttentionBlock(nn.Module):
         return out
 
 class FeedForwardBlock(nn.Module):
-    def __init__(self, input_dim, num_heads, dim_feedforward=2048, dropout=0.1):
+    def __init__(self, input_dim, num_heads, dim_feedforward=2048, dropout=0.1, activation='relu'):
         super().__init__()
         ##|Q.1.d|##########################################################################
         # TODO: Initialize the following. 
         # MLP has the following layers: linear, relu, dropout, linear; hidden dim of linear is given by dim_feedforward
-        self.mlp = nn.Sequential(
-            nn.Linear(input_dim, dim_feedforward),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(dim_feedforward, input_dim)
-        )
+        assert activation in ['relu', 'swiglu']
+        self.activation = activation
+        
+        self.fc_1 = nn.Linear(input_dim, dim_feedforward if self.activation == 'relu' else 2 * dim_feedforward)
+        self.fc_2 = nn.Linear(dim_feedforward, input_dim)
+        
         self.dropout = nn.Dropout(dropout)
         self.norm = nn.LayerNorm(input_dim)
         ###################################################################################
@@ -171,17 +171,25 @@ class FeedForwardBlock(nn.Module):
         ##|Q.1.d|##########################################################################
         # TODO: MLP on the sequence. Add dropout to mlp layer output.
         # Then add a residual connection to the original input, and finally apply normalization.
-        out = self.norm(seq + self.dropout(self.mlp(seq)))
+        x = self.fc_1(seq)
+        if self.activation == 'relu':
+            x = F.relu(x)
+        else:
+            u, v = x.chunk(2, dim=-1)
+            x = F.silu(u) * v
+        x = self.dropout(x)
+        x = self.fc_2(x)
+        out = self.norm(seq + self.dropout(x))
         ###################################################################################
         return out
 
 
 class DecoderLayer(nn.Module):
-    def __init__(self, input_dim, num_heads, dim_feedforward=2048, dropout=0.1 ):
+    def __init__(self, input_dim, num_heads, dim_feedforward=2048, dropout=0.1, activation='relu'):
         super().__init__()
         self.self_atn_block = SelfAttentionBlock(input_dim, num_heads, dropout)
         self.cross_atn_block = CrossAttentionBlock(input_dim, num_heads, dropout)
-        self.feedforward_block = FeedForwardBlock(input_dim, num_heads, dim_feedforward, dropout)
+        self.feedforward_block = FeedForwardBlock(input_dim, num_heads, dim_feedforward, dropout, activation)
 
     def forward(self, seq, cond, mask):
         out = self.self_atn_block(seq, mask)
@@ -190,7 +198,7 @@ class DecoderLayer(nn.Module):
 
 
 class TransformerDecoder(nn.Module):
-    def __init__(self, word_to_idx, idx_to_word, input_dim, embed_dim, num_heads=4, num_layers=2, max_length=50, device='cuda'):
+    def __init__(self, word_to_idx, idx_to_word, input_dim, embed_dim, num_heads=4, num_layers=2, max_length=50, device='cuda', activation='relu'):
         """
         Construct a new TransformerDecoder instance.
         Inputs:
@@ -209,7 +217,7 @@ class TransformerDecoder(nn.Module):
         self._start = word_to_idx.get("<START>", None)
         self.idx_to_word = idx_to_word
         
-        self.layers = nn.ModuleList([DecoderLayer(embed_dim, num_heads) for _ in range(num_layers)])
+        self.layers = nn.ModuleList([DecoderLayer(embed_dim, num_heads, activation=activation) for _ in range(num_layers)])
         
         self.caption_embedding = nn.Embedding(vocab_size, embed_dim, padding_idx=self._null)
         self.positional_encoding = PositionalEncoding(embed_dim, max_len=max_length)
