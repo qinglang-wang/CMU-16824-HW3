@@ -1,16 +1,9 @@
-import sys
+import os, sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import torch.nn as nn
 import torch
-
-sys.path.append("../transformer_captioning") 
-from transformer import (
-    AttentionLayer,
-    MultiHeadAttentionLayer,
-    PositionalEncoding,
-    SelfAttentionBlock,
-    CrossAttentionBlock,
-    FeedForwardBlock
-)
+from transformer_captioning.transformer import *
 
 class EncoderLayer(nn.Module):
     def __init__(self, d_model, num_heads, d_ff=2048, dropout=0.1):
@@ -31,7 +24,7 @@ class ViT(nn.Module):
         - The output embedding corresponding to the [CLS] token is then fed through a linear layer to obtain the logits for each class.
     """
 
-    def __init__(self, patch_dim, d_model, d_ff, num_heads, num_layers, num_patches, num_classes, device = 'cuda'):
+    def __init__(self, patch_dim, d_model, d_ff, num_heads, num_layers, num_patches, num_classes, device='cuda'):
         """
             Construct a new ViT instance.
             Inputs
@@ -54,10 +47,14 @@ class ViT(nn.Module):
         self.num_classes = num_classes
         self.device = device
 
-        self.patch_embedding = None # TODO (Linear Layer that takes as input a patch and outputs a d_model dimensional vector)
-        self.positional_encoding = None # TODO (use the positional encoding from the transformer captioning solution)
-        self.fc = None # TODO (takes as input the embedding corresponding to the [CLS] token and outputs the logits for each class)
-        self.cls_token = None # TODO (learnable [CLS] token embedding)
+        ##|Q.2.a|##########################################################################
+        self.patch_embedding = nn.Linear(3 * self.patch_dim ** 2, self.d_model)
+        self.positional_encoding = PositionalEncoding(self.d_model, max_len=self.num_patches + 1)
+        self.fc = nn.Linear(self.d_model, self.num_classes)
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, self.d_model))
+
+        self.unfold = nn.Unfold(kernel_size=self.patch_dim, stride=self.patch_dim)
+        ###################################################################################
 
         self.layers = nn.ModuleList([EncoderLayer(d_model, num_heads, d_ff) for _ in range(num_layers)])
 
@@ -73,10 +70,13 @@ class ViT(nn.Module):
             Returns:
                 - patches: a FloatTensor of shape (N, num_patches, patch_dim x patch_dim x 3) giving a minibatch of patches    
         """
+        ##|Q.2.b|##########################################################################
+        # TODO: Break images into a grid of patches
+        N, C, H, W = images.shape
+        assert (H % self.patch_dim == 0) and (W % self.patch_dim == 0)
 
-        patches = None # TODO - Break images into a grid of patches
-        # Feel free to use pytorch built-in functions to do this
-        
+        patches = self.unfold(images).transpose(1, 2).contiguous()
+        ###################################################################################
         return patches
 
     def forward(self, images):
@@ -91,15 +91,16 @@ class ViT(nn.Module):
         patches = self.patchify(images)
         patches_embedded = self.patch_embedding(patches)
         
-        output = None # TODO (append a CLS token to the beginning of the sequence of patch embeddings)
-
-        output = self.positional_encoding(patches_embedded)
-        mask = None # TODO (generate a mask and feed it to the self-attention layer in ViT)
+        ##|Q.2.c|##########################################################################
+        output = torch.concat([self.cls_token.expand([images.shape[0], 1, self.d_model]), patches_embedded], dim=1)  # (N, L+1, D)
+        output = self.positional_encoding(output)  # (N, L+1, D)
+        mask = torch.ones([output.shape[1], output.shape[1]], dtype=torch.int, device=output.device)
 
         for layer in self.layers:
-            output = layer(output, mask)
+            output = layer(output, mask.to(output.dtype))
 
-        output = None # TODO (take the embedding corresponding to the [CLS] token and feed it through a linear layer to obtain the logits for each class)
+        output = self.fc(output[:, 0, :])
+        ###################################################################################
 
         return output
 
